@@ -56,11 +56,11 @@ banner() {
     echo " ╚████╔╝ ██║██║     "
     echo "  ╚═══╝  ╚═╝╚═╝     "
     echo -e "${RESET}"
-    printf "%35s${GREEN}Script version: 1.1.14${RESET}\n"
+    printf "%35s${GREEN}Script version: 1.1.9${RESET}\n"
 }
 
 ####################################
-# PANTALLA DE VERIFICACIÓN BONITA
+# PANTALLA DE VERIFICACIÓN
 ####################################
 checking_screen() {
     clear
@@ -165,7 +165,7 @@ install_slipstream_auto() {
 }
 
 ####################################
-# CONEXIÓN AUTOMÁTICA + WATCHDOG + ANIMACIÓN + HISTORIAL DNS
+# CONEXIÓN AUTOMÁTICA + WATCHDOG
 ####################################
 connect_auto() {
     local SERVERS=("$@")
@@ -181,7 +181,10 @@ connect_auto() {
         done
     fi
 
-    while true; do
+    local PASSES=0
+    local MAX_PASSES=2
+
+    while [ $PASSES -lt $MAX_PASSES ]; do
         for SERVER in "${SERVERS[@]}"; do
             clean_slipstream
             > "$LOG_FILE"
@@ -205,7 +208,7 @@ connect_auto() {
             ANIM_IDX=0
             POINTS=("." ".." "...")
 
-            # Animación + check de conexión
+            # Animación de Estableciendo Conexión...
             while [ $TIMEOUT -lt $MAX_TIMEOUT ]; do
                 echo -ne "${GRAY}Estableciendo Conexión${POINTS[$ANIM_IDX]}${RESET}\r"
                 sleep 0.5
@@ -234,16 +237,18 @@ connect_auto() {
                     sleep 1
                     SECONDS_CONNECTED=$((SECONDS_CONNECTED+1))
                     echo -ne "${CYAN}⏱ Tiempo conectado: ${RESET}${SECONDS_CONNECTED}s\r"
+
+                    # ENTER para desconectar
                     if read -t 0.1 -n 1 KEY; then
                         if [[ $KEY == "" ]]; then
                             stty sane
                             clean_slipstream
-                            break 2
+                            break 2   # rompe todo el loop y vuelve al menú
                         fi
                     fi
 
-                    # Reconexión si cae el proceso
-                    if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
+                    # Reconexión si cae el proceso o log indica error
+                    if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|EOF|timeout|error|ping timeout" "$LOG_FILE"; then
                         stty sane
                         echo -e "\n${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
                         sleep 2
@@ -256,13 +261,23 @@ connect_auto() {
             clean_slipstream
         done
 
-        # Si ningún DNS conecta
-        clear
-        echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
-        echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
-        read -p "ENTER para volver"
-        break
+        ((PASSES+=1))
+        if [ $PASSES -lt $MAX_PASSES ]; then
+            clear
+            echo -e "${YELLOW}${BOLD}"
+            echo "════════════════════════════════════════"
+            echo "        INTENTANDO DE NUEVO"
+            echo "════════════════════════════════════════"
+            echo -e "${RESET}"
+            sleep 2
+        fi
     done
+
+    # Si ningún DNS pudo conectar después de MAX_PASSES
+    clear
+    echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
+    echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
+    read -p "ENTER para volver"
 }
 
 ####################################
