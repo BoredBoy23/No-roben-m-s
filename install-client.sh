@@ -60,20 +60,6 @@ banner() {
 }
 
 ####################################
-# PANTALLA DE VERIFICACIÓN
-####################################
-checking_screen() {
-    clear
-    echo -e "${PURPLE}${BOLD}"
-    echo "════════════════════════════════════════"
-    echo "     VERIFICANDO ESTADO DEL SERVIDOR     "
-    echo "════════════════════════════════════════"
-    echo -e "${RESET}"
-    echo
-    echo -e "${GRAY}Espere unos segundos...${RESET}"
-}
-
-####################################
 # LIMPIEZA
 ####################################
 clean_slipstream() {
@@ -83,36 +69,6 @@ clean_slipstream() {
 
 last_log_activity() {
     stat -c %Y "$LOG_FILE" 2>/dev/null
-}
-
-####################################
-# CHEQUEO AUTOMÁTICO DEL SERVIDOR
-####################################
-check_server_on_start() {
-    clean_slipstream
-    > "$LOG_FILE"
-
-    ./slipstream-client \
-        --tcp-listen-port=5201 \
-        --resolver=1.1.1.1 \
-        --domain="$DOMAIN" \
-        --keep-alive-interval=600 \
-        --congestion-control=cubic \
-        > "$LOG_FILE" 2>&1 &
-
-    PID=$!
-    SERVER_STATUS="INACTIVO"
-
-    for i in {1..8}; do
-        if grep -q "Connection confirmed" "$LOG_FILE"; then
-            SERVER_STATUS="ACTIVO"
-            break
-        fi
-        sleep 1
-    done
-
-    kill $PID 2>/dev/null
-    clean_slipstream
 }
 
 ####################################
@@ -169,7 +125,7 @@ install_slipstream_auto() {
 ####################################
 connect_auto() {
     local SERVERS=("$@")
-    
+
     # Priorizar último DNS conectado
     if [ -f "$HISTORY_FILE" ]; then
         LAST_USED=$(cat "$HISTORY_FILE")
@@ -181,7 +137,7 @@ connect_auto() {
         done
     fi
 
-    while true; do  # bucle hasta que un servidor conecte
+    while true; do
         for SERVER in "${SERVERS[@]}"; do
             clean_slipstream
             > "$LOG_FILE"
@@ -190,18 +146,7 @@ connect_auto() {
             echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
             separator
 
-            # Animación de conexión progresiva en bucle
-            ANIMATION=(".","..","...")
-            while true; do
-                for POINTS in "." ".." "..."; do
-                    echo -ne "${GRAY}Estableciendo Conexión${POINTS}\r${RESET}"
-                    sleep 0.5
-                    # Salir de animación si slipstream se lanza
-                    if pgrep -f slipstream-client >/dev/null; then break 2; fi
-                done
-            done
-            echo
-
+            # Lanzamos slipstream en background
             ./slipstream-client \
                 --tcp-listen-port=5201 \
                 --resolver="$SERVER" \
@@ -212,17 +157,23 @@ connect_auto() {
 
             PID=$!
             CONNECTED=false
-            for i in {1..5}; do
+            TIMEOUT=0
+            MAX_TIMEOUT=15   # segundos máximos para considerar que no conectó
+            ANIM_IDX=0
+            POINTS=("." ".." "...")
+            
+            # Animación + check de conexión
+            while [ $TIMEOUT -lt $MAX_TIMEOUT ]; do
+                echo -ne "${GRAY}Estableciendo Conexión${POINTS[$ANIM_IDX]}${RESET}\r"
+                sleep 0.5
+                ((ANIM_IDX=(ANIM_IDX+1)%3))
+                ((TIMEOUT+=1))
                 if grep -q "Connection confirmed" "$LOG_FILE"; then
                     CONNECTED=true
                     break
                 fi
-                if grep -qi "connection closed|timeout|error|lost|EOF" "$LOG_FILE"; then
-                    CONNECTED=false
-                    break
-                fi
-                sleep 1
             done
+            echo
 
             if $CONNECTED; then
                 ACTIVE_DNS="$SERVER"
@@ -267,9 +218,11 @@ connect_auto() {
                         break
                     fi
                 done
+            else
+                echo -e "${RED}No se pudo conectar a $SERVER, probando siguiente...${RESET}"
+                clean_slipstream
+                sleep 1
             fi
-
-            clean_slipstream
         done
     done
 }
@@ -277,9 +230,7 @@ connect_auto() {
 ####################################
 # EJECUCIÓN INICIAL
 ####################################
-checking_screen
 check_server_on_start
-sleep 1
 
 ####################################
 # MENÚ PRINCIPAL
