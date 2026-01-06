@@ -220,22 +220,49 @@ connect_auto() {
                 echo -e "${GRAY}Ctrl + C para desconectar${RESET}"
 
                 LAST_ACTIVITY=$(last_log_activity)
-                IDLE=0
+IDLE=0
+SILENCE_LIMIT=40      # segundos tolerables sin log
+HARD_LIMIT=70         # silencio extremo
+CHECK_INTERVAL=2
 
-                while true; do
-                    sleep 2
-                    CUR=$(last_log_activity)
+while true; do
+    sleep $CHECK_INTERVAL
+    CUR=$(last_log_activity)
 
-                    [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+2)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
+    if [ "$CUR" = "$LAST_ACTIVITY" ]; then
+        IDLE=$((IDLE + CHECK_INTERVAL))
+    else
+        IDLE=0
+        LAST_ACTIVITY="$CUR"
+    fi
 
-                    if [ $IDLE -ge 10 ] || ! kill -0 $PID 2>/dev/null; then
-                        echo -e "${YELLOW}${BOLD}Reconectando automáticamente...${RESET}"
-                        sleep 2
-                        clean_slipstream
-                        connect_auto "${SERVERS[@]}"
-                        return
-                    fi
-                done
+    # 🔴 Proceso muerto = caída real
+    if ! kill -0 $PID 2>/dev/null; then
+        echo -e "${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
+        sleep 2
+        clean_slipstream
+        connect_auto "${SERVERS[@]}"
+        return
+    fi
+
+    # 🔴 Errores explícitos en log
+    if grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
+        echo -e "${YELLOW}${BOLD}Error detectado, reconectando...${RESET}"
+        sleep 2
+        clean_slipstream
+        connect_auto "${SERVERS[@]}"
+        return
+    fi
+
+    # 🟡 Silencio prolongado (pero no agresivo)
+    if [ $IDLE -ge $HARD_LIMIT ]; then
+        echo -e "${YELLOW}${BOLD}Silencio prolongado, reconectando con precaución...${RESET}"
+        sleep 2
+        clean_slipstream
+        connect_auto "${SERVERS[@]}"
+        return
+    fi
+done
             fi
 
             clean_slipstream
