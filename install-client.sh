@@ -8,10 +8,10 @@ clear
 DOMAIN="t.p.2bd.net"
 SERVER_STATUS="DESCONOCIDO"
 ACTIVE_DNS="No conectado"
-HIST_FILE="$HOME/.slipstream/last_dns.txt"
 
 LOG_DIR="$HOME/.slipstream"
 LOG_FILE="$LOG_DIR/slip.log"
+HISTORY_FILE="$LOG_DIR/last_dns.txt"
 mkdir -p "$LOG_DIR"
 
 DATA_SERVERS=(
@@ -56,7 +56,7 @@ banner() {
     echo " ╚████╔╝ ██║██║     "
     echo "  ╚═══╝  ╚═╝╚═╝     "
     echo -e "${RESET}"
-    printf "%35s${GREEN}Script version: 1.1.9${RESET}\n"
+    printf "%35s${GREEN}Script version: 1.1.10${RESET}\n"
 }
 
 ####################################
@@ -69,6 +69,7 @@ checking_screen() {
     echo "     VERIFICANDO ESTADO DEL SERVIDOR     "
     echo "════════════════════════════════════════"
     echo -e "${RESET}"
+    echo
     echo -e "${GRAY}Espere unos segundos...${RESET}"
 }
 
@@ -105,9 +106,6 @@ check_server_on_start() {
     for i in {1..8}; do
         if grep -q "Connection confirmed" "$LOG_FILE"; then
             SERVER_STATUS="ACTIVO"
-            break
-        fi
-        if grep -q "Connection closed" "$LOG_FILE"; then
             break
         fi
         sleep 1
@@ -167,24 +165,7 @@ install_slipstream_auto() {
 }
 
 ####################################
-# FLASH RECONNECT
-####################################
-flash_reconnect() {
-    for i in {1..3}; do
-        echo -ne "${YELLOW}${BOLD}Reconectando${RESET}   \r"
-        sleep 0.3
-        echo -ne "${YELLOW}${BOLD}Reconectando.${RESET}  \r"
-        sleep 0.3
-        echo -ne "${YELLOW}${BOLD}Reconectando..${RESET} \r"
-        sleep 0.3
-        echo -ne "${YELLOW}${BOLD}Reconectando...${RESET}\r"
-        sleep 0.3
-    done
-    echo
-}
-
-####################################
-# CONEXIÓN AUTOMÁTICA + WATCHDOG + CONTADOR + ENTER
+# CONEXIÓN AUTOMÁTICA + WATCHDOG
 ####################################
 connect_auto() {
     local SERVERS=("$@")
@@ -192,9 +173,14 @@ connect_auto() {
     local MAX_PASSES=2
 
     # Priorizar último DNS conectado
-    if [ -f "$HIST_FILE" ]; then
-        LAST_DNS=$(cat "$HIST_FILE")
-        SERVERS=("$LAST_DNS" "${SERVERS[@]/$LAST_DNS/}")
+    if [ -f "$HISTORY_FILE" ]; then
+        LAST_USED=$(cat "$HISTORY_FILE")
+        for i in "${!SERVERS[@]}"; do
+            if [ "${SERVERS[$i]}" = "$LAST_USED" ]; then
+                SERVERS=("${SERVERS[$i]}" "${SERVERS[@]:0:$i}" "${SERVERS[@]:$((i+1))}")
+                break
+            fi
+        done
     fi
 
     while [ $PASSES -lt $MAX_PASSES ]; do
@@ -217,10 +203,18 @@ connect_auto() {
             echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
             separator
 
-            # Animación de Estableciendo Conexión...
-            for dots in {1..3}; do
-                echo -ne "${CYAN}Estableciendo Conexión${'.' * $dots}   \r"
+            # Animación de conexión continua
+            ANIMATION="."
+            while true; do
+                echo -ne "${GRAY}Estableciendo Conexión${ANIMATION}\r${RESET}"
                 sleep 0.5
+                case "$ANIMATION" in
+                    ".") ANIMATION="..";;
+                    "..") ANIMATION="...";;
+                    "...") ANIMATION="."; 
+                esac
+                # Verificar si slipstream ya inició
+                if pgrep -f slipstream-client >/dev/null; then break; fi
             done
             echo
 
@@ -233,53 +227,73 @@ connect_auto() {
                 > "$LOG_FILE" 2>&1 &
 
             PID=$!
-            ACTIVE_DNS="$SERVER"
 
-            # Guardar último DNS bueno
-            echo "$ACTIVE_DNS" > "$HIST_FILE"
-
-            CONNECTED_TIME=0
-            IDLE=0
-            SILENCE_LIMIT=40
-            HARD_LIMIT=70
-            CHECK_INTERVAL=1
-            LAST_ACTIVITY=$(last_log_activity)
-            stty -echo -icanon time 0 min 0
-
-            while true; do
-                sleep $CHECK_INTERVAL
-                CONNECTED_TIME=$((CONNECTED_TIME+CHECK_INTERVAL))
-                CUR=$(last_log_activity)
-                [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+CHECK_INTERVAL)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
-
-                # Mostrar contador y texto separados
-                echo -ne "${CYAN}${BOLD}⏱️ Tiempo conectado: $(printf '%02d:%02d:%02d' $((CONNECTED_TIME/3600)) $((CONNECTED_TIME%3600/60)) $((CONNECTED_TIME%60)))${RESET}\n"
-                echo
-                echo -ne "${GRAY}Presione ENTER para volver al menú${RESET}\r"
-
-                # ENTER detectado
-                if read -r -t 0.1 KEY && [ "$KEY" = "" ]; then
-                    stty sane
-                    clean_slipstream
-                    return
+            CONNECTED=false
+            for i in {1..5}; do
+                if grep -q "Connection confirmed" "$LOG_FILE"; then
+                    CONNECTED=true
+                    break
                 fi
-
-                # Reconexión inteligente
-                if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|timeout|ping timeout|error" "$LOG_FILE" || [ $IDLE -ge $HARD_LIMIT ]; then
-                    echo
-                    stty sane
-                    flash_reconnect
-                    clean_slipstream
-                    connect_auto "${SERVERS[@]}"
-                    return
+                if grep -qi "connection closed" "$LOG_FILE"; then
+                    CONNECTED=false
+                    break
                 fi
+                sleep 1
             done
 
+            if $CONNECTED; then
+                ACTIVE_DNS="$SERVER"
+                echo "$ACTIVE_DNS" > "$HISTORY_FILE"
+                clear
+                echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
+                echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
+                separator
+                echo -e "${GRAY}Presione ENTER para volver al menú${RESET}"
+                echo -ne "${CYAN}⏱ Tiempo conectado: ${RESET}0s\r"
+
+                # Contador de tiempo + ENTER para salir
+                SECONDS_CONNECTED=0
+                stty -icanon -echo
+                while true; do
+                    sleep 1
+                    SECONDS_CONNECTED=$((SECONDS_CONNECTED+1))
+                    echo -ne "${CYAN}⏱ Tiempo conectado: ${RESET}${SECONDS_CONNECTED}s\r"
+                    if read -t 0.1 -n 1 KEY; then
+                        if [[ $KEY == "" ]]; then
+                            stty sane
+                            clean_slipstream
+                            return
+                        fi
+                    fi
+
+                    # Reconexión silenciosa si el proceso muere
+                    if ! kill -0 $PID 2>/dev/null; then
+                        stty sane
+                        echo -e "\n${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
+                        sleep 2
+                        clean_slipstream
+                        connect_auto "${SERVERS[@]}"
+                        return
+                    fi
+
+                    # Reconexión si log indica error
+                    if grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
+                        stty sane
+                        echo -e "\n${YELLOW}${BOLD}Error detectado, reconectando...${RESET}"
+                        sleep 2
+                        clean_slipstream
+                        connect_auto "${SERVERS[@]}"
+                        return
+                    fi
+                done
+            fi
+
+            clean_slipstream
         done
+
         PASSES=$((PASSES+1))
     done
 
-    stty sane
     clear
     echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
     echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
