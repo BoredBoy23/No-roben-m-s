@@ -55,7 +55,7 @@ banner() {
     echo " ╚████╔╝ ██║██║     "
     echo "  ╚═══╝  ╚═╝╚═╝     "
     echo -e "${RESET}"
-    printf "%35s${GREEN}Script version: 1.1.6${RESET}\n"
+    printf "%35s${GREEN}Script version: 1.1.7${RESET}\n"
 }
 
 ####################################
@@ -179,6 +179,24 @@ flash_reconnect() {
 }
 
 ####################################
+# ANIMACIÓN DE ESTABLECIENDO CONEXIÓN
+####################################
+connection_animation() {
+    local TEXT="Estableciendo Conexión"
+    local i=0
+    while : ; do
+        dots=$((i % 4))
+        echo -ne "${CYAN}${BOLD}${TEXT}$(printf '%.*s' $dots '...')${RESET}\r"
+        sleep 0.5
+        i=$((i + 1))
+        # Salir si la conexión se estableció
+        grep -q "Connection confirmed" "$LOG_FILE" && break
+        grep -qiE "connection closed|connection lost|timeout|error|ping timeout" "$LOG_FILE" && break
+    done
+    echo
+}
+
+####################################
 # CONEXIÓN AUTOMÁTICA + WATCHDOG + HISTORIAL + CONTADOR
 ####################################
 connect_auto() {
@@ -191,7 +209,6 @@ connect_auto() {
         LAST_DNS=$(cat "$HIST_FILE")
         for i in "${!SERVERS[@]}"; do
             if [ "${SERVERS[$i]}" = "$LAST_DNS" ]; then
-                # Mover a la primera posición
                 unset 'SERVERS[i]'
                 SERVERS=("$LAST_DNS" "${SERVERS[@]}")
                 break
@@ -218,6 +235,7 @@ connect_auto() {
             echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
             separator
 
+            # Lanzar slipstream
             ./slipstream-client \
                 --tcp-listen-port=5201 \
                 --resolver="$SERVER" \
@@ -228,56 +246,63 @@ connect_auto() {
 
             PID=$!
 
-            # Timeout de conexión inicial
-            for i in {1..3}; do
-                grep -q "Connection confirmed" "$LOG_FILE" && break
-                sleep 1
-            done
+            # Animación mientras se establece la conexión
+            connection_animation
 
-            if grep -q "Connection confirmed" "$LOG_FILE"; then
-                ACTIVE_DNS="$SERVER"
-                echo "$ACTIVE_DNS" > "$HIST_FILE"
-
-                clear
-                echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
-                echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
-                separator
-
-                # Contador de tiempo
-                CONNECTED_TIME=0
-                IDLE=0
-                SILENCE_LIMIT=40
-                HARD_LIMIT=70
-                CHECK_INTERVAL=1
-                LAST_ACTIVITY=$(last_log_activity)
-
-                # Capturar Ctrl+C
-                trap 'echo -e "\n${YELLOW}Desconectado manualmente${RESET}"; clean_slipstream; return' SIGINT
-
-                while true; do
-                    sleep $CHECK_INTERVAL
-                    CONNECTED_TIME=$((CONNECTED_TIME + CHECK_INTERVAL))
-                    CUR=$(last_log_activity)
-
-                    [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+CHECK_INTERVAL)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
-
-                    # Mostrar contador en misma línea
-                    echo -ne "${CYAN}${BOLD}⏱️ Tiempo conectado: $(printf '%02d:%02d:%02d' $((CONNECTED_TIME/3600)) $((CONNECTED_TIME%3600/60)) $((CONNECTED_TIME%60)))${RESET}\r"
-
-                    # Reconexión inteligente
-                    if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|timeout|error" "$LOG_FILE" || [ $IDLE -ge $HARD_LIMIT ]; then
-                        echo
-                        flash_reconnect
-                        clean_slipstream
-                        connect_auto "${SERVERS[@]}"
-                        return
-                    fi
-                done
+            # Detectar errores iniciales
+            if ! grep -q "Connection confirmed" "$LOG_FILE" || grep -qiE "connection closed|connection lost|timeout|error|ping timeout" "$LOG_FILE"; then
+                clean_slipstream
+                continue
             fi
 
-            clean_slipstream
-        done
+            # Conexión establecida
+            ACTIVE_DNS="$SERVER"
+            echo "$ACTIVE_DNS" > "$HIST_FILE"
 
+            clear
+            echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
+            echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
+            separator
+
+            # Contador de tiempo
+            CONNECTED_TIME=0
+            IDLE=0
+            SILENCE_LIMIT=40
+            HARD_LIMIT=70
+            CHECK_INTERVAL=1
+            LAST_ACTIVITY=$(last_log_activity)
+
+            # Capturar ENTER para desconectar
+            stty -echo
+            read -r -t 0.1
+            while true; do
+                # Contador
+                sleep $CHECK_INTERVAL
+                CONNECTED_TIME=$((CONNECTED_TIME + CHECK_INTERVAL))
+                CUR=$(last_log_activity)
+                [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+CHECK_INTERVAL)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
+
+                # Mostrar contador en misma línea
+                echo -ne "${CYAN}${BOLD}⏱️ Tiempo conectado: $(printf '%02d:%02d:%02d' $((CONNECTED_TIME/3600)) $((CONNECTED_TIME%3600/60)) $((CONNECTED_TIME%60))) | Presione ENTER para volver al menú${RESET}\r"
+
+                # Leer ENTER sin bloquear
+                if read -t 0.1 -r; then
+                    stty echo
+                    clean_slipstream
+                    return
+                fi
+
+                # Reconexión inteligente
+                if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|timeout|error|ping timeout" "$LOG_FILE" || [ $IDLE -ge $HARD_LIMIT ]; then
+                    echo
+                    flash_reconnect
+                    clean_slipstream
+                    connect_auto "${SERVERS[@]}"
+                    return
+                fi
+            done
+
+        done
         PASSES=$((PASSES+1))
     done
 
