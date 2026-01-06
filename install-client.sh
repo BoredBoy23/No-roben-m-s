@@ -148,14 +148,14 @@ install_slipstream_auto() {
         aarch64|armv8a)
             echo -e "${GREEN}Sistema ARM 64 bits detectado${RESET}"
             rm -f setup.sh
-            wget https://raw.githubusercontent.com/BoredBoy23/A-congelar-se-ha-dicho/main/setup.sh
+            wget https://raw.githubusercontent.com/BoredBoy23/No-roben-m-s/refs/heads/main/setup.sh
             chmod +x setup.sh
             ./setup.sh
             ;;
         armv7l|armv7a|armv8l)
             echo -e "${YELLOW}Sistema ARM 32 bits detectado${RESET}"
             rm -f setup32.sh
-            wget https://raw.githubusercontent.com/BoredBoy23/A-congelar-se-ha-dicho/main/setup32.sh
+            wget https://raw.githubusercontent.com/BoredBoy23/No-roben-m-s/refs/heads/main/setup32.sh
             chmod +x setup32.sh
             ./setup32.sh
             ;;
