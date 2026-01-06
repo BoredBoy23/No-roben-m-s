@@ -56,7 +56,7 @@ banner() {
     echo " ╚████╔╝ ██║██║     "
     echo "  ╚═══╝  ╚═╝╚═╝     "
     echo -e "${RESET}"
-    printf "%35s${GREEN}Script version: 1.1.10${RESET}\n"
+    printf "%35s${GREEN}Script version: 1.1.9${RESET}\n"
 }
 
 ####################################
