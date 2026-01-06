@@ -11,7 +11,9 @@ ACTIVE_DNS="No conectado"
 
 LOG_DIR="$HOME/.slipstream"
 LOG_FILE="$LOG_DIR/slip.log"
+HISTORY_FILE="$LOG_DIR/dns_history.log"
 mkdir -p "$LOG_DIR"
+touch "$HISTORY_FILE"
 
 DATA_SERVERS=(
 "200.55.128.130:53"
@@ -107,11 +109,9 @@ check_server_on_start() {
             SERVER_STATUS="ACTIVO"
             break
         fi
-
         if grep -q "Connection closed" "$LOG_FILE"; then
             break
         fi
-
         sleep 1
     done
 
@@ -169,7 +169,7 @@ install_slipstream_auto() {
 }
 
 ####################################
-# CONEXIÓN AUTOMÁTICA + WATCHDOG
+# CONEXIÓN AUTOMÁTICA + WATCHDOG + TIMER + HISTORIAL
 ####################################
 connect_auto() {
     local SERVERS=("$@")
@@ -205,64 +205,68 @@ connect_auto() {
                 > "$LOG_FILE" 2>&1 &
 
             PID=$!
+            SERVER_CONNECTED=false
 
+            # Timeout inicial 3s
             for i in {1..3}; do
-                grep -q "Connection confirmed" "$LOG_FILE" && break
+                grep -q "Connection confirmed" "$LOG_FILE" && { SERVER_CONNECTED=true; break; }
                 sleep 1
             done
 
-            if grep -q "Connection confirmed" "$LOG_FILE"; then
+            if $SERVER_CONNECTED; then
                 ACTIVE_DNS="$SERVER"
-                clear
                 echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
                 echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
                 separator
                 echo -e "${GRAY}Ctrl + C para desconectar${RESET}"
 
-                LAST_ACTIVITY=$(last_log_activity)
-IDLE=0
-SILENCE_LIMIT=40      # segundos tolerables sin log
-HARD_LIMIT=70         # silencio extremo
-CHECK_INTERVAL=2
+                # Guardar historial si no existe
+                grep -qx "$ACTIVE_DNS" "$HISTORY_FILE" || echo "$ACTIVE_DNS" >> "$HISTORY_FILE"
 
-while true; do
-    sleep $CHECK_INTERVAL
-    CUR=$(last_log_activity)
+                # TIMER
+                CONNECTED_TIME=0
+                IDLE=0
+                SILENCE_LIMIT=40
+                HARD_LIMIT=70
+                CHECK_INTERVAL=2
 
-    if [ "$CUR" = "$LAST_ACTIVITY" ]; then
-        IDLE=$((IDLE + CHECK_INTERVAL))
-    else
-        IDLE=0
-        LAST_ACTIVITY="$CUR"
-    fi
+                while true; do
+                    sleep $CHECK_INTERVAL
+                    CONNECTED_TIME=$((CONNECTED_TIME + CHECK_INTERVAL))
+                    CUR=$(last_log_activity)
 
-    # 🔴 Proceso muerto = caída real
-    if ! kill -0 $PID 2>/dev/null; then
-        echo -e "${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
-        sleep 2
-        clean_slipstream
-        connect_auto "${SERVERS[@]}"
-        return
-    fi
+                    [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+CHECK_INTERVAL)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
 
-    # 🔴 Errores explícitos en log
-    if grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
-        echo -e "${YELLOW}${BOLD}Error detectado, reconectando...${RESET}"
-        sleep 2
-        clean_slipstream
-        connect_auto "${SERVERS[@]}"
-        return
-    fi
+                    # Mostrar tiempo conectado en línea
+                    echo -ne "${CYAN}Tiempo conectado: $(date -u -d @$CONNECTED_TIME +%H:%M:%S)${RESET}\r"
 
-    # 🟡 Silencio prolongado (pero no agresivo)
-    if [ $IDLE -ge $HARD_LIMIT ]; then
-        echo -e "${YELLOW}${BOLD}Silencio prolongado, reconectando con precaución...${RESET}"
-        sleep 2
-        clean_slipstream
-        connect_auto "${SERVERS[@]}"
-        return
-    fi
-done
+                    # Proceso muerto
+                    if ! kill -0 $PID 2>/dev/null; then
+                        echo -e "\n${YELLOW}${BOLD}Conexión caída, reconectando...${RESET}"
+                        sleep 2
+                        clean_slipstream
+                        connect_auto "${SERVERS[@]}"
+                        return
+                    fi
+
+                    # Errores explícitos
+                    if grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
+                        echo -e "\n${YELLOW}${BOLD}Error detectado, reconectando...${RESET}"
+                        sleep 2
+                        clean_slipstream
+                        connect_auto "${SERVERS[@]}"
+                        return
+                    fi
+
+                    # Silencio prolongado
+                    if [ $IDLE -ge $HARD_LIMIT ]; then
+                        echo -e "\n${YELLOW}${BOLD}Silencio prolongado, reconectando con precaución...${RESET}"
+                        sleep 2
+                        clean_slipstream
+                        connect_auto "${SERVERS[@]}"
+                        return
+                    fi
+                done
             fi
 
             clean_slipstream
@@ -297,8 +301,8 @@ while true; do
     echo " 2) Conectar en WiFi"
     echo " 3) Instalar slipstream-client"
     echo " 0) Salir"
-
     separator
+
     read -p "Selecciona una opción: " opt
 
     case $opt in
