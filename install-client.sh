@@ -169,9 +169,7 @@ install_slipstream_auto() {
 ####################################
 connect_auto() {
     local SERVERS=("$@")
-    local PASSES=0
-    local MAX_PASSES=2
-
+    
     # Priorizar último DNS conectado
     if [ -f "$HISTORY_FILE" ]; then
         LAST_USED=$(cat "$HISTORY_FILE")
@@ -183,18 +181,7 @@ connect_auto() {
         done
     fi
 
-    while [ $PASSES -lt $MAX_PASSES ]; do
-
-        [ $PASSES -eq 1 ] && {
-            clear
-            echo -e "${YELLOW}${BOLD}"
-            echo "════════════════════════════════════════"
-            echo "        INTENTANDO DE NUEVO"
-            echo "════════════════════════════════════════"
-            echo -e "${RESET}"
-            sleep 2
-        }
-
+    while true; do  # bucle hasta que un servidor conecte
         for SERVER in "${SERVERS[@]}"; do
             clean_slipstream
             > "$LOG_FILE"
@@ -203,18 +190,15 @@ connect_auto() {
             echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
             separator
 
-            # Animación de conexión continua
-            ANIMATION="."
+            # Animación de conexión progresiva en bucle
+            ANIMATION=(".","..","...")
             while true; do
-                echo -ne "${GRAY}Estableciendo Conexión${ANIMATION}\r${RESET}"
-                sleep 0.5
-                case "$ANIMATION" in
-                    ".") ANIMATION="..";;
-                    "..") ANIMATION="...";;
-                    "...") ANIMATION="."; 
-                esac
-                # Verificar si slipstream ya inició
-                if pgrep -f slipstream-client >/dev/null; then break; fi
+                for POINTS in "." ".." "..."; do
+                    echo -ne "${GRAY}Estableciendo Conexión${POINTS}\r${RESET}"
+                    sleep 0.5
+                    # Salir de animación si slipstream se lanza
+                    if pgrep -f slipstream-client >/dev/null; then break 2; fi
+                done
             done
             echo
 
@@ -227,14 +211,13 @@ connect_auto() {
                 > "$LOG_FILE" 2>&1 &
 
             PID=$!
-
             CONNECTED=false
             for i in {1..5}; do
                 if grep -q "Connection confirmed" "$LOG_FILE"; then
                     CONNECTED=true
                     break
                 fi
-                if grep -qi "connection closed" "$LOG_FILE"; then
+                if grep -qi "connection closed|timeout|error|lost|EOF" "$LOG_FILE"; then
                     CONNECTED=false
                     break
                 fi
@@ -272,8 +255,7 @@ connect_auto() {
                         echo -e "\n${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
                         sleep 2
                         clean_slipstream
-                        connect_auto "${SERVERS[@]}"
-                        return
+                        break
                     fi
 
                     # Reconexión si log indica error
@@ -282,22 +264,14 @@ connect_auto() {
                         echo -e "\n${YELLOW}${BOLD}Error detectado, reconectando...${RESET}"
                         sleep 2
                         clean_slipstream
-                        connect_auto "${SERVERS[@]}"
-                        return
+                        break
                     fi
                 done
             fi
 
             clean_slipstream
         done
-
-        PASSES=$((PASSES+1))
     done
-
-    clear
-    echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
-    echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
-    read -p "ENTER para volver"
 }
 
 ####################################
