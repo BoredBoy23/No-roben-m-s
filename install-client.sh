@@ -5,7 +5,7 @@ clear
 ####################################
 # CONFIGURACIÓN
 ####################################
-DOMAIN="dns.etecsafree.work.gd"
+DOMAIN="t.p.2bd.net"
 SERVER_STATUS="DESCONOCIDO"
 ACTIVE_DNS="No conectado"
 
