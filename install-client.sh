@@ -202,7 +202,7 @@ connect_auto() {
                 --domain="$DOMAIN" \
                 --keep-alive-interval=600 \
                 --congestion-control=cubic \
-                > >(tee -a "$LOG_FILE") 2>&1 &
+                > "$LOG_FILE" 2>&1 &
 
             PID=$!
 
