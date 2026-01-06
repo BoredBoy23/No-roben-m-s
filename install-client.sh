@@ -183,8 +183,11 @@ connect_auto() {
 
     local PASSES=0
     local MAX_PASSES=2
+    local CONNECTED_ANY=false
 
     while [ $PASSES -lt $MAX_PASSES ]; do
+        local SERVER_CONNECTED_THIS_PASS=false
+
         for SERVER in "${SERVERS[@]}"; do
             clean_slipstream
             > "$LOG_FILE"
@@ -208,7 +211,7 @@ connect_auto() {
             ANIM_IDX=0
             POINTS=("." ".." "...")
 
-            # Animación de Estableciendo Conexión...
+            # Animación Estableciendo Conexión...
             while [ $TIMEOUT -lt $MAX_TIMEOUT ]; do
                 echo -ne "${GRAY}Estableciendo Conexión${POINTS[$ANIM_IDX]}${RESET}\r"
                 sleep 0.5
@@ -224,6 +227,9 @@ connect_auto() {
             if $CONNECTED; then
                 ACTIVE_DNS="$SERVER"
                 echo "$ACTIVE_DNS" > "$HISTORY_FILE"
+                CONNECTED_ANY=true
+                SERVER_CONNECTED_THIS_PASS=true
+
                 clear
                 echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
                 echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
@@ -243,17 +249,17 @@ connect_auto() {
                         if [[ $KEY == "" ]]; then
                             stty sane
                             clean_slipstream
-                            break 2   # rompe todo el loop y vuelve al menú
+                            return  # vuelve directamente al menú
                         fi
                     fi
 
-                    # Reconexión si cae el proceso o log indica error
+                    # Reconexión automática si cae el proceso o hay error
                     if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|EOF|timeout|error|ping timeout" "$LOG_FILE"; then
                         stty sane
                         echo -e "\n${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
                         sleep 2
                         clean_slipstream
-                        continue 2
+                        break  # pasa al siguiente DNS o reinicia bucle
                     fi
                 done
             fi
@@ -262,7 +268,8 @@ connect_auto() {
         done
 
         ((PASSES+=1))
-        if [ $PASSES -lt $MAX_PASSES ]; then
+        # Mostrar "Intentando de nuevo" solo si fue la primera pasada y NO se conectó ningún servidor
+        if [ $PASSES -lt $MAX_PASSES ] && [ "$SERVER_CONNECTED_THIS_PASS" = false ]; then
             clear
             echo -e "${YELLOW}${BOLD}"
             echo "════════════════════════════════════════"
@@ -273,11 +280,13 @@ connect_auto() {
         fi
     done
 
-    # Si ningún DNS pudo conectar después de MAX_PASSES
-    clear
-    echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
-    echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
-    read -p "ENTER para volver"
+    # Si ningún DNS pudo conectar después de las dos pasadas
+    if [ "$CONNECTED_ANY" = false ]; then
+        clear
+        echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
+        echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
+        read -p "ENTER para volver"
+    fi
 }
 
 ####################################
