@@ -254,6 +254,7 @@ connect_auto() {
 
                 # Mostrar contador y texto separados
                 echo -ne "${CYAN}${BOLD}⏱️ Tiempo conectado: $(printf '%02d:%02d:%02d' $((CONNECTED_TIME/3600)) $((CONNECTED_TIME%3600/60)) $((CONNECTED_TIME%60)))${RESET}\n"
+                echo
                 echo -ne "${GRAY}Presione ENTER para volver al menú${RESET}\r"
 
                 # ENTER detectado
