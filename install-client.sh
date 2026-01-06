@@ -8,7 +8,6 @@ clear
 DOMAIN="t.p.2bd.net"
 SERVER_STATUS="DESCONOCIDO"
 ACTIVE_DNS="No conectado"
-
 LOG_DIR="$HOME/.slipstream"
 LOG_FILE="$LOG_DIR/slip.log"
 HIST_FILE="$LOG_DIR/last_dns.txt"
@@ -40,7 +39,9 @@ GRAY="\e[90m"
 BOLD="\e[1m"
 RESET="\e[0m"
 
-separator() { echo -e "${GRAY}────────────────────────────────────────${RESET}"; }
+separator() {
+    echo -e "${GRAY}────────────────────────────────────────${RESET}"
+}
 
 ####################################
 # BANNER
@@ -54,7 +55,7 @@ banner() {
     echo " ╚████╔╝ ██║██║     "
     echo "  ╚═══╝  ╚═╝╚═╝     "
     echo -e "${RESET}"
-    printf "%35s${GREEN}Script version: 1.1.5${RESET}\n"
+    printf "%35s${GREEN}Script version: 1.1.6${RESET}\n"
 }
 
 ####################################
@@ -67,6 +68,7 @@ checking_screen() {
     echo "     VERIFICANDO ESTADO DEL SERVIDOR     "
     echo "════════════════════════════════════════"
     echo -e "${RESET}"
+    echo
     echo -e "${GRAY}Espere unos segundos...${RESET}"
 }
 
@@ -82,14 +84,6 @@ last_log_activity() {
     stat -c %Y "$LOG_FILE" 2>/dev/null
 }
 
-save_last_dns() {
-    echo "$1" > "$HIST_FILE"
-}
-
-load_last_dns() {
-    [ -f "$HIST_FILE" ] && echo "$(cat "$HIST_FILE")"
-}
-
 ####################################
 # CHEQUEO AUTOMÁTICO DEL SERVIDOR
 ####################################
@@ -102,14 +96,20 @@ check_server_on_start() {
         --resolver=1.1.1.1 \
         --domain="$DOMAIN" \
         --keep-alive-interval=600 \
+        --congestion-control=cubic \
         > "$LOG_FILE" 2>&1 &
 
     PID=$!
     SERVER_STATUS="INACTIVO"
 
     for i in {1..8}; do
-        grep -q "Connection confirmed" "$LOG_FILE" && { SERVER_STATUS="ACTIVO"; break; }
-        grep -q "Connection closed" "$LOG_FILE" && break
+        if grep -q "Connection confirmed" "$LOG_FILE"; then
+            SERVER_STATUS="ACTIVO"
+            break
+        fi
+        if grep -q "Connection closed" "$LOG_FILE"; then
+            break
+        fi
         sleep 1
     done
 
@@ -129,116 +129,161 @@ show_server_status() {
 }
 
 ####################################
-# INSTALADOR AUTOMÁTICO
+# INSTALADOR AUTOMÁTICO (32 / 64 bits)
 ####################################
 install_slipstream_auto() {
     clear
     ARCH=$(uname -m)
+
+    echo -e "${CYAN}${BOLD}Detectando arquitectura del dispositivo...${RESET}"
+    echo
+    echo -e "${GRAY}Arquitectura detectada:${RESET} $ARCH"
+    echo
+
     pkg install wget -y
 
     case "$ARCH" in
         aarch64|armv8a)
-            wget -q https://raw.githubusercontent.com/BoredBoy23/No-roben-m-s/main/setup.sh
-            chmod +x setup.sh && ./setup.sh ;;
+            echo -e "${GREEN}Sistema ARM 64 bits detectado${RESET}"
+            rm -f setup.sh
+            wget https://raw.githubusercontent.com/BoredBoy23/No-roben-m-s/refs/heads/main/setup.sh
+            chmod +x setup.sh
+            ./setup.sh
+            ;;
         armv7l|armv7a|armv8l)
-            wget -q https://raw.githubusercontent.com/BoredBoy23/No-roben-m-s/main/setup32.sh
-            chmod +x setup32.sh && ./setup32.sh ;;
+            echo -e "${YELLOW}Sistema ARM 32 bits detectado${RESET}"
+            rm -f setup32.sh
+            wget https://raw.githubusercontent.com/BoredBoy23/No-roben-m-s/refs/heads/main/setup32.sh
+            chmod +x setup32.sh
+            ./setup32.sh
+            ;;
         *)
-            echo -e "${RED}Arquitectura no soportada${RESET}" ;;
+            echo -e "${RED}Arquitectura no soportada: $ARCH${RESET}"
+            ;;
     esac
 
-    read -p "ENTER para volver"
+    echo
+    read -p "ENTER para volver al menú"
 }
 
 ####################################
-# FLASH VISUAL RECONEXIÓN
+# FLASH DE RECONEXIÓN
 ####################################
 flash_reconnect() {
-    clear
     for i in {1..3}; do
-        echo -e "${YELLOW}${BOLD}═══════════════════════════════${RESET}"
-        echo -e "${YELLOW}${BOLD}     ⚡ RECONEXIÓN AUTOMÁTICA ⚡     ${RESET}"
-        echo -e "${YELLOW}${BOLD}═══════════════════════════════${RESET}"
+        echo -ne "${YELLOW}${BOLD}!!! Reconectando !!!${RESET}\r"
         sleep 0.3
-        clear
-        sleep 0.2
+        echo -ne "                        \r"
+        sleep 0.3
     done
 }
 
 ####################################
-# CONEXIÓN AUTOMÁTICA + WATCHDOG + HISTORIAL DNS
+# CONEXIÓN AUTOMÁTICA + WATCHDOG + HISTORIAL + CONTADOR
 ####################################
 connect_auto() {
     local SERVERS=("$@")
-    local LAST_DNS=$(load_last_dns)
-    local ORDERED_SERVERS=()
+    local PASSES=0
+    local MAX_PASSES=2
 
-    # Poner primero el último DNS bueno
-    [ -n "$LAST_DNS" ] && ORDERED_SERVERS+=("$LAST_DNS")
-    for S in "${SERVERS[@]}"; do
-        [[ "$S" != "$LAST_DNS" ]] && ORDERED_SERVERS+=("$S")
-    done
-
-    for SERVER in "${ORDERED_SERVERS[@]}"; do
-        clean_slipstream
-        > "$LOG_FILE"
-
-        clear
-        echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
-        separator
-
-        ./slipstream-client \
-            --tcp-listen-port=5201 \
-            --resolver="$SERVER" \
-            --domain="$DOMAIN" \
-            --keep-alive-interval=600 \
-            > "$LOG_FILE" 2>&1 &
-
-        PID=$!
-        sleep 3
-        if ! grep -q "Connection confirmed" "$LOG_FILE"; then
-            kill $PID 2>/dev/null
-            continue
-        fi
-
-        # Conexión exitosa
-        ACTIVE_DNS="$SERVER"
-        save_last_dns "$SERVER"
-
-        clear
-        echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
-        echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
-        separator
-        echo -e "${GRAY}Ctrl + C para desconectar${RESET}"
-        echo
-
-        CONNECTED_TIME=0
-        IDLE=0
-        CHECK_INTERVAL=1
-        HARD_LIMIT=90
-        LAST_ACTIVITY=$(last_log_activity)
-
-        while true; do
-            sleep $CHECK_INTERVAL
-            CONNECTED_TIME=$((CONNECTED_TIME + CHECK_INTERVAL))
-            CUR=$(last_log_activity)
-
-            [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+CHECK_INTERVAL)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
-
-            # Mostrar contador en tiempo real
-            echo -ne "${CYAN}${BOLD}Tiempo conectado: $(printf '%02d:%02d:%02d' $((CONNECTED_TIME/3600)) $((CONNECTED_TIME%3600/60)) $((CONNECTED_TIME%60)))${RESET}\r"
-
-            # Si cayó la conexión o error en log
-            if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|timeout|error" "$LOG_FILE" || [ $IDLE -ge $HARD_LIMIT ]; then
-                flash_reconnect
-                clean_slipstream
-                connect_auto "${SERVERS[@]}"
-                return
+    # Reordenar según último DNS bueno
+    if [ -f "$HIST_FILE" ]; then
+        LAST_DNS=$(cat "$HIST_FILE")
+        for i in "${!SERVERS[@]}"; do
+            if [ "${SERVERS[$i]}" = "$LAST_DNS" ]; then
+                # Mover a la primera posición
+                unset 'SERVERS[i]'
+                SERVERS=("$LAST_DNS" "${SERVERS[@]}")
+                break
             fi
         done
+    fi
+
+    while [ $PASSES -lt $MAX_PASSES ]; do
+        [ $PASSES -eq 1 ] && {
+            clear
+            echo -e "${YELLOW}${BOLD}"
+            echo "════════════════════════════════════════"
+            echo "        INTENTANDO DE NUEVO"
+            echo "════════════════════════════════════════"
+            echo -e "${RESET}"
+            sleep 2
+        }
+
+        for SERVER in "${SERVERS[@]}"; do
+            clean_slipstream
+            > "$LOG_FILE"
+
+            clear
+            echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
+            separator
+
+            ./slipstream-client \
+                --tcp-listen-port=5201 \
+                --resolver="$SERVER" \
+                --domain="$DOMAIN" \
+                --keep-alive-interval=600 \
+                --congestion-control=cubic \
+                > "$LOG_FILE" 2>&1 &
+
+            PID=$!
+
+            # Timeout de conexión inicial
+            for i in {1..3}; do
+                grep -q "Connection confirmed" "$LOG_FILE" && break
+                sleep 1
+            done
+
+            if grep -q "Connection confirmed" "$LOG_FILE"; then
+                ACTIVE_DNS="$SERVER"
+                echo "$ACTIVE_DNS" > "$HIST_FILE"
+
+                clear
+                echo -e "${GREEN}${BOLD}Servidor online ✅${RESET}"
+                echo -e "${GREEN}DNS activo:${RESET} $ACTIVE_DNS"
+                separator
+
+                # Contador de tiempo
+                CONNECTED_TIME=0
+                IDLE=0
+                SILENCE_LIMIT=40
+                HARD_LIMIT=70
+                CHECK_INTERVAL=1
+                LAST_ACTIVITY=$(last_log_activity)
+
+                # Capturar Ctrl+C
+                trap 'echo -e "\n${YELLOW}Desconectado manualmente${RESET}"; clean_slipstream; return' SIGINT
+
+                while true; do
+                    sleep $CHECK_INTERVAL
+                    CONNECTED_TIME=$((CONNECTED_TIME + CHECK_INTERVAL))
+                    CUR=$(last_log_activity)
+
+                    [ "$CUR" = "$LAST_ACTIVITY" ] && IDLE=$((IDLE+CHECK_INTERVAL)) || { IDLE=0; LAST_ACTIVITY="$CUR"; }
+
+                    # Mostrar contador en misma línea
+                    echo -ne "${CYAN}${BOLD}⏱️ Tiempo conectado: $(printf '%02d:%02d:%02d' $((CONNECTED_TIME/3600)) $((CONNECTED_TIME%3600/60)) $((CONNECTED_TIME%60)))${RESET}\r"
+
+                    # Reconexión inteligente
+                    if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|timeout|error" "$LOG_FILE" || [ $IDLE -ge $HARD_LIMIT ]; then
+                        echo
+                        flash_reconnect
+                        clean_slipstream
+                        connect_auto "${SERVERS[@]}"
+                        return
+                    fi
+                done
+            fi
+
+            clean_slipstream
+        done
+
+        PASSES=$((PASSES+1))
     done
 
+    clear
     echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
+    echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
     read -p "ENTER para volver"
 }
 
