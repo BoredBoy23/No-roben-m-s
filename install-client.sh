@@ -56,7 +56,21 @@ banner() {
     echo " ╚████╔╝ ██║██║     "
     echo "  ╚═══╝  ╚═╝╚═╝     "
     echo -e "${RESET}"
-    printf "%35s${GREEN}Script version: 1.1.9${RESET}\n"
+    printf "%35s${GREEN}Script version: 1.1.14${RESET}\n"
+}
+
+####################################
+# PANTALLA DE VERIFICACIÓN BONITA
+####################################
+checking_screen() {
+    clear
+    echo -e "${PURPLE}${BOLD}"
+    echo "════════════════════════════════════════"
+    echo "     VERIFICANDO ESTADO DEL SERVIDOR     "
+    echo "════════════════════════════════════════"
+    echo -e "${RESET}"
+    echo
+    echo -e "${GRAY}Espere unos segundos...${RESET}"
 }
 
 ####################################
@@ -69,6 +83,36 @@ clean_slipstream() {
 
 last_log_activity() {
     stat -c %Y "$LOG_FILE" 2>/dev/null
+}
+
+####################################
+# CHEQUEO DEL ESTADO DEL SERVIDOR
+####################################
+check_server_on_start() {
+    clean_slipstream
+    > "$LOG_FILE"
+
+    ./slipstream-client \
+        --tcp-listen-port=5201 \
+        --resolver=1.1.1.1 \
+        --domain="$DOMAIN" \
+        --keep-alive-interval=600 \
+        --congestion-control=cubic \
+        > "$LOG_FILE" 2>&1 &
+
+    PID=$!
+    SERVER_STATUS="INACTIVO"
+
+    for i in {1..8}; do
+        if grep -q "Connection confirmed" "$LOG_FILE"; then
+            SERVER_STATUS="ACTIVO"
+            break
+        fi
+        sleep 1
+    done
+
+    kill $PID 2>/dev/null
+    clean_slipstream
 }
 
 ####################################
@@ -121,7 +165,7 @@ install_slipstream_auto() {
 }
 
 ####################################
-# CONEXIÓN AUTOMÁTICA + WATCHDOG
+# CONEXIÓN AUTOMÁTICA + WATCHDOG + ANIMACIÓN + HISTORIAL DNS
 ####################################
 connect_auto() {
     local SERVERS=("$@")
@@ -146,7 +190,6 @@ connect_auto() {
             echo -e "${CYAN}[*] Probando servidor:${RESET} $SERVER"
             separator
 
-            # Lanzamos slipstream en background
             ./slipstream-client \
                 --tcp-listen-port=5201 \
                 --resolver="$SERVER" \
@@ -158,10 +201,10 @@ connect_auto() {
             PID=$!
             CONNECTED=false
             TIMEOUT=0
-            MAX_TIMEOUT=15   # segundos máximos para considerar que no conectó
+            MAX_TIMEOUT=15
             ANIM_IDX=0
             POINTS=("." ".." "...")
-            
+
             # Animación + check de conexión
             while [ $TIMEOUT -lt $MAX_TIMEOUT ]; do
                 echo -ne "${GRAY}Estableciendo Conexión${POINTS[$ANIM_IDX]}${RESET}\r"
@@ -185,7 +228,6 @@ connect_auto() {
                 echo -e "${GRAY}Presione ENTER para volver al menú${RESET}"
                 echo -ne "${CYAN}⏱ Tiempo conectado: ${RESET}0s\r"
 
-                # Contador de tiempo + ENTER para salir
                 SECONDS_CONNECTED=0
                 stty -icanon -echo
                 while true; do
@@ -196,41 +238,39 @@ connect_auto() {
                         if [[ $KEY == "" ]]; then
                             stty sane
                             clean_slipstream
-                            return
+                            break 2
                         fi
                     fi
 
-                    # Reconexión silenciosa si el proceso muere
-                    if ! kill -0 $PID 2>/dev/null; then
+                    # Reconexión si cae el proceso
+                    if ! kill -0 $PID 2>/dev/null || grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
                         stty sane
                         echo -e "\n${YELLOW}${BOLD}Conexión perdida, reconectando...${RESET}"
                         sleep 2
                         clean_slipstream
-                        break
-                    fi
-
-                    # Reconexión si log indica error
-                    if grep -qiE "connection closed|connection lost|EOF|timeout|error" "$LOG_FILE"; then
-                        stty sane
-                        echo -e "\n${YELLOW}${BOLD}Error detectado, reconectando...${RESET}"
-                        sleep 2
-                        clean_slipstream
-                        break
+                        continue 2
                     fi
                 done
-            else
-                echo -e "${RED}No se pudo conectar a $SERVER, probando siguiente...${RESET}"
-                clean_slipstream
-                sleep 1
             fi
+
+            clean_slipstream
         done
+
+        # Si ningún DNS conecta
+        clear
+        echo -e "${RED}${BOLD}Servidor offline ❌${RESET}"
+        echo -e "${YELLOW}Solicite reiniciar el servidor${RESET}"
+        read -p "ENTER para volver"
+        break
     done
 }
 
 ####################################
 # EJECUCIÓN INICIAL
 ####################################
+checking_screen
 check_server_on_start
+sleep 1
 
 ####################################
 # MENÚ PRINCIPAL
