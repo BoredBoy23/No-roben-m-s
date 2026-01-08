@@ -4,7 +4,7 @@ clear
 ####################################
 # CONFIGURACIÓN
 ####################################
-DOMAIN="t.p.2bd.net"
+DOMAIN="h.p.2bd.net"
 SERVER_STATUS="DESCONOCIDO"
 ACTIVE_DNS="No conectado"
 
